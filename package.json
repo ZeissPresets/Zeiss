@@ -1,26 +1,15 @@
 {
   "name": "whatsapp-bot",
   "version": "1.0.0",
-  "description": "WhatsApp Bot dengan multiple connections dan DDoS attack capability",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "start": "node index.js"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.4.0",
-    "@hapi/boom": "^10.0.0",
-    "axios": "^1.6.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
-  },
-  "keywords": [
-    "whatsapp",
-    "bot",
-    "ddos",
-    "multi-connection"
-  ],
-  "author": "Your Name",
-  "license": "MIT"
+    "@whiskeysockets/baileys": "^6.7.1",
+    "qrcode-terminal": "^0.12.0",
+    "axios": "^1.6.7",
+    "fs-extra": "^11.2.0",
+    "prompt-sync": "^4.2.0"
+  }
 }
