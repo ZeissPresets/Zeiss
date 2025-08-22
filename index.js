@@ -1,228 +1,219 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers, getCodeFromWASocket } = require('@whiskeysockets/baileys');
-const fs = require('fs');
-const path = require('path');
-const commandHandler = require('./command');
+import { makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, delay, DisconnectReason } from '@whiskeysockets/baileys';
+import fs from 'fs-extra';
+import readlineSync from 'readline-sync';
+import { pino } from 'pino';
+import chalk from 'chalk';
+import CommandHandler from './command.js';
 
-// Load config
-let config = {};
-const configPath = path.join(__dirname, 'config.json');
+const CONFIG_FILE = './config.json';
 
-if (fs.existsSync(configPath)) {
+// Logger yang benar
+const logger = pino({ level: 'silent' });
+
+let commandHandler = null;
+let sock = null;
+
+async function startBot() {
     try {
-        config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-        if (!config.admin) config.admin = null;
-        if (!config.prefix) config.prefix = '.';
-        if (!config.blockedUsers) config.blockedUsers = [];
-    } catch (e) {
-        console.log('Error reading config, creating new one...');
-        config = { 
-            admin: null, 
-            prefix: '.',
-            blockedUsers: []
-        };
-    }
-} else {
-    config = { 
-        admin: null, 
-        prefix: '.',
-        blockedUsers: []
-    };
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-}
-
-// Load custom commands if exists
-let customCommands = {};
-const commandsPath = path.join(__dirname, 'custom-commands.json');
-if (fs.existsSync(commandsPath)) {
-    try {
-        customCommands = JSON.parse(fs.readFileSync(commandsPath, 'utf8'));
-    } catch (e) {
-        console.log('Error reading custom commands:', e);
-        customCommands = {};
-    }
-}
-
-async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info');
-
-    const sock = makeWASocket({
-        auth: state,
-        printQRInTerminal: false,
-        browser: Browsers.ubuntu('Chrome')
-    });
-
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
-        
-        if (connection === 'close') {
-            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('Connection closed due to ', lastDisconnect.error, ', reconnecting ', shouldReconnect);
-            
-            if (shouldReconnect) {
-                connectToWhatsApp();
+        let config = {};
+        if (fs.existsSync(CONFIG_FILE)) {
+            try {
+                config = fs.readJsonSync(CONFIG_FILE);
+            } catch (error) {
+                console.log(chalk.yellow('📝 Membuat config baru...'));
+                config = {};
             }
-        } else if (connection === 'open') {
-            console.log('Connected to WhatsApp successfully!');
+        }
+
+        if (!config.phoneNumber) {
+            const inputNumber = readlineSync.question('📱 Masukkan nomor WhatsApp (62xxx): ');
+            config.phoneNumber = inputNumber.replace(/\D/g, '');
+            fs.writeJsonSync(CONFIG_FILE, config, { spaces: 2 });
+            console.log(chalk.green(`✅ Nomor ${config.phoneNumber} berhasil disimpan`));
+        }
+
+        const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+        const { version } = await fetchLatestBaileysVersion();
+
+        console.log(chalk.blue('🔄 Membuat koneksi WhatsApp...'));
+
+        sock = makeWASocket({
+            version,
+            auth: state,
+            printQRInTerminal: false,
+            browser: ['Ubuntu', 'Chrome', '120.0.0.0'],
+            logger: logger,
+            markOnlineOnConnect: true,
+            syncFullHistory: false,
+            generateHighQualityLinkPreview: true
+        });
+
+        // Inisialisasi command handler
+        commandHandler = new CommandHandler(sock);
+
+        // Menyimpan kredensial ketika diperbarui
+        sock.ev.on('creds.update', saveCreds);
+
+        sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect, qr } = update;
             
-            // Save admin number if not set
-            if (!config.admin) {
+            if (connection === 'open') {
+                console.log(chalk.green('✅ Berhasil terhubung ke WhatsApp!'));
+                console.log(chalk.green('✅ Sesi tersimpan, bot siap digunakan'));
+                
+                if (config.pairingRequested) {
+                    config.pairingRequested = false;
+                    fs.writeJsonSync(CONFIG_FILE, config, { spaces: 2 });
+                }
+                
                 const user = sock.user;
-                if (user && user.id) {
-                    config.admin = user.id;
-                    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-                    console.log('Admin number saved:', user.id);
-                    
-                    // Send welcome message to admin
-                    await sock.sendMessage(config.admin, { 
-                        text: `🤖 *Bot Berhasil Terhubung!*\n\nGunakan ${config.prefix}help untuk melihat daftar perintah.` 
-                    });
+                console.log(chalk.blue(`🤖 Bot berjalan sebagai: ${user.name || user.id}`));
+                console.log(chalk.blue('✨ Bot sekarang aktif dan siap menerima command!'));
+                console.log(chalk.blue('🔧 Gunakan .menu untuk melihat daftar command'));
+                
+                // Kirim welcome message ke console
+                console.log(chalk.green('\n========================================'));
+                console.log(chalk.green('🚀 BOT BERHASIL DIJALANKAN!'));
+                console.log(chalk.green('========================================'));
+            } 
+            
+            if (connection === 'close') {
+                const statusCode = lastDisconnect?.error?.output?.statusCode;
+                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+                
+                console.log(chalk.red('❌ Koneksi terputus'));
+                
+                if (statusCode === DisconnectReason.loggedOut) {
+                    console.log(chalk.red('🔒 Anda telah logout, hapus folder auth_info dan jalankan ulang'));
+                    process.exit(0);
+                }
+                
+                if (shouldReconnect) {
+                    console.log(chalk.yellow('🔄 Mencoba menghubungkan ulang dalam 3 detik...'));
+                    await delay(3000);
+                    startBot();
                 }
             }
-        }
-    });
-
-    // Listen for pairing code
-    sock.ev.on('creds.update', saveCreds);
-    
-    // Generate and display pairing code
-    try {
-        const code = await getCodeFromWASocket(sock);
-        console.log('PAIRING CODE:', code);
-        console.log('Instruksi: Buka WhatsApp → Settings → Linked Devices → Link a Device → Masukkan kode di atas');
-    } catch (error) {
-        console.log('Error getting pairing code:', error);
-    }
-
-    // Handle incoming messages
-    sock.ev.on('messages.upsert', async (m) => {
-        const message = m.messages[0];
-        if (!message.message) return;
-        
-        const messageType = Object.keys(message.message)[0];
-        let text = '';
-        
-        if (messageType === 'conversation') {
-            text = message.message.conversation;
-        } else if (messageType === 'extendedTextMessage') {
-            text = message.message.extendedTextMessage.text;
-        } else {
-            return; // Skip non-text messages
-        }
-        
-        const sender = message.key.remoteJid;
-        const isGroup = sender.endsWith('@g.us');
-        const pushName = message.pushName || 'User';
-        
-        // Check if user is blocked
-        if (config.blockedUsers.includes(sender)) {
-            console.log(`Blocked user ${sender} tried to send message`);
-            return;
-        }
-        
-        // Check if message starts with prefix
-        if (text.startsWith(config.prefix)) {
-            console.log(`Command from ${pushName} (${sender}): ${text}`);
             
-            // Handle admin commands
-            if (sender === config.admin) {
-                await commandHandler(sock, text, sender, pushName, isGroup, config);
-            } 
-            // Handle public commands for everyone
-            else {
-                await handlePublicCommands(sock, text, sender, pushName, isGroup, config);
+            // Jika QR code muncul (fallback)
+            if (qr) {
+                console.log(chalk.yellow('📱 QR code tersedia sebagai alternatif'));
             }
+        });
+
+        // Jika belum terdaftar, minta kode pairing
+        if (!state.creds.registered) {
+            setTimeout(async () => {
+                try {
+                    const phoneNumber = config.phoneNumber.startsWith('62') ? 
+                        config.phoneNumber : '62' + config.phoneNumber;
+                    
+                    console.log(chalk.yellow('\n📞 Meminta pairing code untuk nomor:', phoneNumber));
+                    
+                    const code = await sock.requestPairingCode(phoneNumber);
+                    
+                    console.log(chalk.green('\n══════════════════════════════════════════'));
+                    console.log(chalk.green('              PAIRING CODE'));
+                    console.log(chalk.green('══════════════════════════════════════════'));
+                    console.log(chalk.green('           ' + code));
+                    console.log(chalk.green('══════════════════════════════════════════'));
+                    console.log(chalk.blue('📱 Cara menggunakan:'));
+                    console.log(chalk.blue('1. Buka WhatsApp di ponsel Anda'));
+                    console.log(chalk.blue('2. Pergi ke Settings → Linked Devices'));
+                    console.log(chalk.blue('3. Pilih "Link a Device"'));
+                    console.log(chalk.blue('4. Masukkan kode di atas'));
+                    console.log(chalk.blue('5. Tunggu hingga terhubung'));
+                    console.log(chalk.green('══════════════════════════════════════════\n'));
+                    
+                    config.pairingRequested = true;
+                    fs.writeJsonSync(CONFIG_FILE, config, { spaces: 2 });
+                    
+                } catch (err) {
+                    console.error(chalk.red('❌ Gagal membuat pairing code:'), err.message);
+                    console.log(chalk.yellow('🔄 Mencoba lagi dalam 5 detik...'));
+                    await delay(5000);
+                    startBot();
+                }
+            }, 2000);
         }
-        
-        // Handle pairing for new admin
-        else if (text === `${config.prefix}pair` && !config.admin) {
-            config.admin = sender;
-            fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-            await sock.sendMessage(sender, { 
-                text: '✅ Anda sekarang adalah admin bot!' 
-            });
-            console.log(`Admin set to: ${sender}`);
-        }
-        
-        // Handle custom commands
-        else if (customCommands[text.toLowerCase()]) {
-            await sock.sendMessage(sender, { 
-                text: customCommands[text.toLowerCase()] 
-            });
-        }
-    });
-}
 
-// Handle public commands (available for everyone)
-async function handlePublicCommands(sock, text, sender, pushName, isGroup, config) {
-    const args = text.slice(config.prefix.length).trim().split(/ +/);
-    const command = args.shift().toLowerCase();
-    
-    switch (command) {
-        case 'help':
-            await sock.sendMessage(sender, {
-                text: `🤖 *BOT PUBLIC COMMANDS* 🤖
+        // Menangani pesan masuk dan command
+        sock.ev.on('messages.upsert', async (m) => {
+            try {
+                const message = m.messages[0];
+                if (!message.key.fromMe && m.type === 'notify') {
+                    const sender = message.key.remoteJid;
+                    console.log(chalk.cyan('📩 Pesan diterima dari:'), sender);
+                    
+                    // Coba handle command
+                    const isCommand = await commandHandler.handleCommand(message);
+                    
+                    // Jika bukan command, balas dengan pesan default
+                    if (!isCommand && message.message) {
+                        let text = '';
+                        
+                        if (message.message.conversation) {
+                            text = message.message.conversation;
+                        } else if (message.message.extendedTextMessage) {
+                            text = message.message.extendedTextMessage.text;
+                        }
+                        
+                        if (text) {
+                            await sock.sendMessage(sender, { 
+                                text: `Hai! 👋\nSaya adalah bot WhatsApp yang dilengkapi dengan berbagai fitur.\n\nGunakan command *.menu* untuk melihat daftar perintah yang tersedia!\n\n💡 *Tips:* Semua command dimulai dengan tanda titik (.)` 
+                            });
+                            console.log(chalk.green('✅ Pesan default dibalas ke:'), sender);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error(chalk.red('❌ Error menangani pesan:'), error.message);
+            }
+        });
 
-🔹 ${config.prefix}help - Tampilkan bantuan
-🔹 ${config.prefix}menu - Menu utama bot
-🔹 ${config.prefix}owner - Info pemilik bot
-🔹 ${config.prefix}status - Status bot
-🔹 ${config.prefix}sticker - Buat sticker dari gambar
-🔹 ${config.prefix}tts <teks> - Convert teks ke voice
+        // Handle pesan yang dikirim sendiri
+        sock.ev.on('messages.upsert', async (m) => {
+            if (m.messages[0].key.fromMe) {
+                console.log(chalk.gray('📤 Pesan dikirim:'), m.messages[0].message?.conversation?.substring(0, 50) || 'Media/Other');
+            }
+        });
 
-Kirim gambar dengan caption ${config.prefix}sticker untuk membuat sticker!`
-            });
-            break;
-            
-        case 'menu':
-            await sock.sendMessage(sender, {
-                text: `📋 *MENU BOT* 📋
+        console.log(chalk.yellow('⏳ Menunggu koneksi...'));
 
-1. ${config.prefix}help - Bantuan
-2. ${config.prefix}owner - Info pemilik
-3. ${config.prefix}status - Status bot
-4. ${config.prefix}sticker - Buat sticker
-5. ${config.prefix}tts - Text to speech
-
-Bot oleh: ${config.admin ? config.admin.split('@')[0] : 'Admin'}`
-            });
-            break;
-            
-        case 'owner':
-            await sock.sendMessage(sender, {
-                text: `👤 *OWNER BOT* 👤
-
-Nama: Admin Bot
-Nomor: ${config.admin ? config.admin.split('@')[0] : 'Tidak tersedia'}
-Status: Online
-
-Hubungi owner untuk pertanyaan lebih lanjut.`
-            });
-            break;
-            
-        case 'status':
-            const uptime = process.uptime();
-            const hours = Math.floor(uptime / 3600);
-            const minutes = Math.floor((uptime % 3600) / 60);
-            const seconds = Math.floor(uptime % 60);
-            
-            await sock.sendMessage(sender, {
-                text: `📊 *STATUS BOT* 📊
-
-🟢 Status: Online
-⏰ Uptime: ${hours}h ${minutes}m ${seconds}s
-👤 Admin: ${config.admin ? 'Tersedia' : 'Tidak tersedia'}
-🚀 Prefix: ${config.prefix}
-📞 Pengguna: ${pushName}
-
-Bot berjalan dengan normal.`
-            });
-            break;
-            
-        default:
-            await sock.sendMessage(sender, {
-                text: `❌ Command "${command}" tidak dikenali. Ketik ${config.prefix}help untuk melihat commands.`
-            });
+    } catch (error) {
+        console.error(chalk.red('❌ Error starting bot:'), error.message);
+        console.log(chalk.yellow('🔄 Restarting in 5 seconds...'));
+        await delay(5000);
+        startBot();
     }
 }
 
-connectToWhatsApp().catch(err => console.log('Error:', err));
+// Menangani error
+process.on('uncaughtException', (error) => {
+    console.error(chalk.red('❌ Uncaught Exception:'), error.message);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error(chalk.red('❌ Unhandled Rejection:'), reason);
+});
+
+// Handle Ctrl+C untuk graceful shutdown
+process.on('SIGINT', () => {
+    console.log(chalk.yellow('\n\n👋 Menghentikan bot...'));
+    if (commandHandler) {
+        commandHandler.stopAllAttacks();
+    }
+    console.log(chalk.green('✅ Bot berhasil dihentikan. Sampai jumpa!'));
+    process.exit(0);
+});
+
+// Clear console dan mulai bot
+console.clear();
+console.log(chalk.green('🚀 Starting Advanced WhatsApp Bot...'));
+console.log(chalk.green('========================================'));
+
+startBot().catch(error => {
+    console.error(chalk.red('❌ Error starting bot:'), error.message);
+    console.log(chalk.yellow('🔄 Restarting in 3 seconds...'));
+    setTimeout(startBot, 3000);
+});

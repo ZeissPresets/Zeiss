@@ -1,26 +1,30 @@
 {
-  "name": "whatsapp-bot-advanced",
-  "version": "1.0.0",
-  "description": "WhatsApp Bot dengan command handler lengkap",
+  "name": "wa-bot-advanced",
+  "version": "2.0.0",
+  "description": "Advanced WhatsApp Bot with Complete Command System",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.4.0",
+    "fs-extra": "^11.1.1",
+    "readline-sync": "^1.4.10",
+    "pino": "^8.15.0",
     "axios": "^1.6.0",
-    "moment": "^2.29.4",
+    "chalk": "^4.1.2",
     "node-cron": "^3.0.2"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
   },
   "keywords": [
     "whatsapp",
     "bot",
     "baileys",
-    "command-handler"
+    "command",
+    "attack",
+    "automation"
   ],
   "author": "Your Name",
   "license": "MIT"
