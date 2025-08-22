@@ -1,13 +1,16 @@
 const { attack } = require('./attack');
 
 async function handleCommand({ sock, msg, cfg }) {
-  const text =
-    msg.message.conversation ||
-    msg.message.extendedTextMessage?.text ||
-    msg.message.imageMessage?.caption ||
-    msg.message.videoMessage?.caption ||
-    '';
   const from = msg.key.remoteJid;
+  const sender = msg.key.participant || msg.key.remoteJid;
+  const m = msg.message;
+  const text =
+    m?.conversation ||
+    m?.extendedTextMessage?.text ||
+    m?.imageMessage?.caption ||
+    m?.videoMessage?.caption ||
+    '';
+
   const p = cfg.prefix || '.';
   if (!text.startsWith(p)) return;
 
@@ -15,9 +18,15 @@ async function handleCommand({ sock, msg, cfg }) {
   const cmd = args.shift().toLowerCase();
 
   if (cmd === 'attack') {
+    // Cek admin
+    if (!sender.includes(cfg.admin)) {
+      return sock.sendMessage(from, { text: '❌ Anda tidak memiliki izin menjalankan perintah ini.' });
+    }
+
     if (args.length < 2) {
       return sock.sendMessage(from, { text: `Format: ${p}attack <url> <durasi>` });
     }
+
     const url = args[0];
     const duration = parseInt(args[1]);
 
