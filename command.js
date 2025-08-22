@@ -216,4 +216,22 @@ async function commandHandler(sock, text, sender, pushName, isGroup, config) {
 🔹 ${config.prefix}addcmd <nama> <response> - Tambah custom command
 🔹 ${config.prefix}delcmd <nama> - Hapus custom command
 🔹 ${config.prefix}listcmd - List custom commands
-🔹 ${config.prefix}
+🔹 ${config.prefix}setprefix <prefix> - Ubah prefix bot
+🔹 ${config.prefix}stats - Lihat statistik bot
+
+*PUBLIC COMMANDS*
+🔹 ${config.prefix}help - Bantuan
+🔹 ${config.prefix}menu - Menu utama
+🔹 ${config.prefix}owner - Info pemilik
+🔹 ${config.prefix}status - Status bot`
+            });
+            break;
+
+        default:
+            await sock.sendMessage(sender, {
+                text: `❌ Command "${command}" tidak dikenali. Ketik ${config.prefix}help untuk melihat commands.`
+            });
+    }
+}
+
+module.exports = commandHandler;
