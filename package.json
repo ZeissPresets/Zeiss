@@ -1,7 +1,7 @@
 {
-  "name": "wa-bot-advanced",
-  "version": "4.0.0",
-  "description": "Advanced WhatsApp Bot with Enhanced Error Handling",
+  "name": "wa-bot-premium",
+  "version": "2.0.0",
+  "description": "Premium WhatsApp Bot with Beautiful UI",
   "main": "index.js",
   "type": "module",
   "scripts": {
@@ -17,16 +17,14 @@
     "readline-sync": "^1.4.10",
     "pino": "^8.15.0",
     "axios": "^1.6.0",
-    "chalk": "^4.1.2",
-    "node-cron": "^3.0.2"
+    "chalk": "^4.1.2"
   },
   "keywords": [
     "whatsapp",
     "bot",
     "baileys",
-    "error",
-    "handling",
-    "stable"
+    "premium",
+    "ui"
   ],
   "author": "Your Name",
   "license": "MIT"
