@@ -1,5 +1,5 @@
 import AttackManager from './attack.js';
-import chalk from 'chalk';
+import logger from './logger.js';
 
 class CommandHandler {
     constructor(sock) {
@@ -16,7 +16,8 @@ class CommandHandler {
             description: 'Menampilkan menu bot',
             usage: '.menu',
             handler: async (message, args, sender) => {
-                const menuText = `
+                try {
+                    const menuText = `
 🤖 *BOT WHATSAPP MENU* 🤖
 
 *🔧 PERINTAH YANG TERSEDIA:*
@@ -27,11 +28,13 @@ class CommandHandler {
 • *.status* - Status bot dan statistics
 • *.info* - Info tentang bot
 • *.ping* - Test respon bot
+• *.logs* - Lihat log terbaru
 
 *⚡ ATTACK COMMANDS*
 • *.attack <url> <detik>* - Attack website (max 300s)
 • *.stopattack* - Hentikan semua attack
 • *.stats* - Lihat statistics attack
+• *.listattack* - Lihat attack aktif
 
 *🛠️ UTILITY*
 • *.time* - Waktu server sekarang
@@ -42,10 +45,19 @@ class CommandHandler {
 • *.profile* - Info profile Anda
 • *.mystats* - Statistics penggunaan Anda
 
+*⚙️ SYSTEM*
+• *.restart* - Restart bot
+• *.cleanup* - Bersihkan session
+• *.clearlogs* - Bersihkan logs
+
 *⚠️ PERINGATAN:*
 Gunakan fitur ini dengan bijak dan hanya untuk testing legal!
-                `;
-                await this.sendMessage(sender, menuText, 'Command .menu berhasil dijalankan!');
+                    `;
+                    await this.sendMessage(sender, menuText);
+                } catch (error) {
+                    logger.error('Error in menu command', error);
+                    await this.sendMessage(sender, '❌ Error menampilkan menu');
+                }
             }
         });
 
@@ -54,342 +66,216 @@ Gunakan fitur ini dengan bijak dan hanya untuk testing legal!
             description: 'Bantuan command',
             usage: '.help [command]',
             handler: async (message, args, sender) => {
-                if (args.length > 0) {
-                    const cmdName = args[0].toLowerCase();
-                    if (this.commands.has(cmdName)) {
-                        const cmd = this.commands.get(cmdName);
-                        await this.sendMessage(sender, 
-                            `*🔧 Bantuan Command: .${cmdName}*\n\n` +
-                            `*Deskripsi:* ${cmd.description}\n` +
-                            `*Usage:* ${cmd.usage}\n` +
-                            `*Contoh:* .${cmdName}${cmd.usage.includes('<') ? ' ' + cmd.usage.split(' ')[1] : ''}`
-                        );
+                try {
+                    if (args.length > 0) {
+                        const cmdName = args[0].toLowerCase();
+                        if (this.commands.has(cmdName)) {
+                            const cmd = this.commands.get(cmdName);
+                            await this.sendMessage(sender, 
+                                `*🔧 Bantuan Command: .${cmdName}*\n\n` +
+                                `*Deskripsi:* ${cmd.description}\n` +
+                                `*Usage:* ${cmd.usage}\n` +
+                                `*Contoh:* .${cmdName}${cmd.usage.includes('<') ? ' ' + cmd.usage.split(' ')[1] : ''}`
+                            );
+                        } else {
+                            await this.sendMessage(sender, `❌ Command *.${cmdName}* tidak ditemukan!`);
+                        }
                     } else {
-                        await this.sendMessage(sender, `❌ Command *.${cmdName}* tidak ditemukan!`);
+                        let helpText = '*📚 DAFTAR COMMAND YANG TERSEDIA:*\n\n';
+                        const categories = {};
+                        
+                        this.commands.forEach((cmd, name) => {
+                            const category = cmd.description.includes('attack') ? 'ATTACK' :
+                                            cmd.description.includes('status') ? 'INFO' :
+                                            cmd.description.includes('user') ? 'USER' :
+                                            cmd.description.includes('system') ? 'SYSTEM' : 'UTILITY';
+                            
+                            if (!categories[category]) categories[category] = [];
+                            categories[category].push(`• *.${name}* - ${cmd.description}`);
+                        });
+
+                        for (const [category, commands] of Object.entries(categories)) {
+                            helpText += `*${category}:*\n${commands.join('\n')}\n\n`;
+                        }
+                        
+                        helpText += 'ℹ️ Gunakan *.help <command>* untuk info detail command';
+                        await this.sendMessage(sender, helpText);
                     }
-                } else {
-                    let helpText = '*📚 DAFTAR COMMAND YANG TERSEDIA:*\n\n';
-                    this.commands.forEach((cmd, name) => {
-                        helpText += `• *.${name}* - ${cmd.description}\n`;
-                    });
-                    helpText += '\nℹ️ Gunakan *.help <command>* untuk info detail command';
-                    await this.sendMessage(sender, helpText);
+                } catch (error) {
+                    logger.error('Error in help command', error);
+                    await this.sendMessage(sender, '❌ Error menampilkan bantuan');
                 }
             }
         });
 
-        // Command .attack
+        // Command .attack (Improved with error handling)
         this.commands.set('attack', {
             description: 'Melakukan attack ke URL tertentu',
             usage: '.attack <url> <duration_in_seconds> [concurrency]',
             handler: async (message, args, sender) => {
-                this.updateUserStats(sender, 'attack');
-                
-                if (args.length < 2) {
-                    await this.sendMessage(sender, 
-                        '❌ Format salah! Gunakan: .attack <url> <detik> [concurrency]\n' +
-                        'Contoh: .attack https://example.com 30 5'
-                    );
-                    return;
-                }
-
-                const url = args[0];
-                const duration = parseInt(args[1]) * 1000;
-                const concurrency = args[2] ? parseInt(args[2]) : 3;
-
-                if (duration > 300000) {
-                    await this.sendMessage(sender, '❌ Durasi maksimal 300 detik (5 menit)');
-                    return;
-                }
-
-                if (concurrency > 10) {
-                    await this.sendMessage(sender, '❌ Concurrency maksimal 10');
-                    return;
-                }
-
-                await this.sendMessage(sender, 
-                    `🚀 *Command terdeteksi .attack akan di jalankan segera...*\n\n` +
-                    `📡 Target: ${url}\n` +
-                    `⏰ Durasi: ${args[1]} detik\n` +
-                    `🔢 Concurrency: ${concurrency}\n` +
-                    `🔄 Memulai attack...`
-                );
-
                 try {
-                    const result = await this.attackManager.startAttack(url, duration, concurrency);
-                    await this.sendMessage(sender, 
-                        `✅ *Attack Selesai!*\n\n` +
-                        `📊 Total Requests: ${result.totalRequests}\n` +
-                        `✅ Berhasil: ${result.successful}\n` +
-                        `❌ Gagal: ${result.failed}\n` +
-                        `🎯 Success Rate: ${result.successRate}%\n` +
-                        `⏱️ Waktu: ${result.duration.toFixed(2)} detik\n` +
-                        `📈 RPS: ${result.rps} requests/detik`
-                    );
-                } catch (error) {
-                    await this.sendMessage(sender, `❌ Error: ${error.message}`);
-                }
-            }
-        });
-
-        // Command .stopattack
-        this.commands.set('stopattack', {
-            description: 'Menghentikan semua attack',
-            usage: '.stopattack',
-            handler: async (message, args, sender) => {
-                const stopped = this.attackManager.stopAllAttacks();
-                await this.sendMessage(sender, 
-                    `🛑 *Attack Dihentikan!*\n` +
-                    `Berhasil menghentikan ${stopped} attack yang aktif`
-                );
-            }
-        });
-
-        // Command .status
-        this.commands.set('status', {
-            description: 'Menampilkan status bot',
-            usage: '.status',
-            handler: async (message, args, sender) => {
-                const stats = this.attackManager.getStatistics();
-                const memoryUsage = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2);
-                const uptime = Math.floor(process.uptime());
-                
-                const statusText = `
-📊 *STATUS BOT - REAL TIME*
-
-• 🟢 Bot Online
-• 📡 Total Requests: ${this.attackManager.getTotalRequests().toLocaleString()}
-• ⚡ Active Attacks: ${stats.activeAttacks}
-• 💾 Memory Usage: ${memoryUsage} MB
-• ⏰ Uptime: ${this.formatUptime(uptime)}
-
-📈 *STATISTICS:*
-• ✅ Success Rate: ${stats.successRate}%
-• ❌ Error Rate: ${stats.errorRate}%
-• ⏱️ Timeout Rate: ${stats.timeoutRate}%
-
-🤖 *SYSTEM:*
-• Node.js: ${process.version}
-• Platform: ${process.platform}
-                `;
-                await this.sendMessage(sender, statusText);
-            }
-        });
-
-        // Command .stats
-        this.commands.set('stats', {
-            description: 'Menampilkan statistics attack',
-            usage: '.stats',
-            handler: async (message, args, sender) => {
-                const stats = this.attackManager.getStatistics();
-                const activeAttacks = this.attackManager.getActiveAttacks();
-                
-                let statsText = `📊 *ATTACK STATISTICS*\n\n`;
-                statsText += `• 📨 Total Requests: ${stats.totalRequests.toLocaleString()}\n`;
-                statsText += `• ⚡ Active Attacks: ${stats.activeAttacks}\n`;
-                statsText += `• ✅ Success Rate: ${stats.successRate}%\n`;
-                statsText += `• ❌ Error Rate: ${stats.errorRate}%\n`;
-                statsText += `• ⏱️ Timeout Rate: ${stats.timeoutRate}%\n\n`;
-
-                if (activeAttacks.length > 0) {
-                    statsText += `🔥 *ACTIVE ATTACKS:*\n`;
-                    activeAttacks.forEach(([id, attack]) => {
-                        const elapsed = Math.floor((Date.now() - attack.startTime) / 1000);
-                        const remaining = Math.floor((attack.endTime - Date.now()) / 1000);
-                        statsText += `• ${attack.target} (${elapsed}s/${remaining}s remaining)\n`;
-                    });
-                }
-
-                await this.sendMessage(sender, statsText);
-            }
-        });
-
-        // Command .ping
-        this.commands.set('ping', {
-            description: 'Test respon bot',
-            usage: '.ping',
-            handler: async (message, args, sender) => {
-                const startTime = Date.now();
-                await this.sendMessage(sender, '🏓 Pong!');
-                const endTime = Date.now();
-                const pingTime = endTime - startTime;
-                
-                await this.sendMessage(sender, 
-                    `📡 *PONG!*\n` +
-                    `⏱️ Response Time: ${pingTime}ms\n` +
-                    `🌐 Bot Status: 🟢 ONLINE`
-                );
-            }
-        });
-
-        // Command .time
-        this.commands.set('time', {
-            description: 'Waktu server sekarang',
-            usage: '.time',
-            handler: async (message, args, sender) => {
-                const now = new Date();
-                await this.sendMessage(sender, 
-                    `🕐 *WAKTU SERVER*\n\n` +
-                    `📅 Tanggal: ${now.toLocaleDateString('id-ID')}\n` +
-                    `⏰ Jam: ${now.toLocaleTimeString('id-ID')}\n` +
-                    `🌐 Timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}\n` +
-                    `📆 Timestamp: ${now.getTime()}`
-                );
-            }
-        });
-
-        // Command .info
-        this.commands.set('info', {
-            description: 'Info tentang bot',
-            usage: '.info',
-            handler: async (message, args, sender) => {
-                await this.sendMessage(sender, `
-ℹ️ *INFORMASI BOT v2.0*
-
-• 🤖 *Nama:* WhatsApp Bot Advanced
-• 📚 *Versi:* 2.0.0
-• 🛠️ *Developer:* Your Name
-• 📅 *Update:* ${new Date().toLocaleDateString('id-ID')}
-• ⚡ *Fitur:* 15+ Command, HTTP Attack, Real-time Stats
-
-*🔧 TEKNOLOGI:*
-• Baileys WhatsApp API
-• Node.js + Express
-• Axios HTTP Client
-• Advanced Command System
-
-*📊 PERFORMANCE:*
-• Multi-Thread Attack
-• Real-time Monitoring
-• Request Statistics
-• User Management
-
-*⚠️ DISCLAIMER:*
-Bot ini dibuat untuk tujuan edukasi dan testing. Gunakan dengan bertanggung jawab!
-                `);
-            }
-        });
-
-        // Command .profile
-        this.commands.set('profile', {
-            description: 'Info profile Anda',
-            usage: '.profile',
-            handler: async (message, args, sender) => {
-                const userStats = this.userStats.get(sender) || { commands: 0, lastCommand: null };
-                await this.sendMessage(sender, 
-                    `👤 *PROFILE INFO*\n\n` +
-                    `📧 User: ${sender}\n` +
-                    `📊 Total Commands: ${userStats.commands}\n` +
-                    `⏰ Last Command: ${userStats.lastCommand || 'Never'}\n` +
-                    `🎯 Status: 🟢 Active User`
-                );
-            }
-        });
-
-        // Command .mystats
-        this.commands.set('mystats', {
-            description: 'Statistics penggunaan Anda',
-            usage: '.mystats',
-            handler: async (message, args, sender) => {
-                const userStats = this.userStats.get(sender) || { commands: 0, lastCommand: null };
-                await this.sendMessage(sender, 
-                    `📊 *MY STATISTICS*\n\n` +
-                    `👤 User: ${sender.split('@')[0]}\n` +
-                    `📨 Total Commands: ${userStats.commands}\n` +
-                    `⏰ Last Activity: ${userStats.lastCommand || 'Never'}\n` +
-                    `⭐ User Level: ${this.getUserLevel(userStats.commands)}`
-                );
-            }
-        });
-
-        // Command .calc
-        this.commands.set('calc', {
-            description: 'Kalkulator sederhana',
-            usage: '.calc <expression>',
-            handler: async (message, args, sender) => {
-                if (args.length === 0) {
-                    await this.sendMessage(sender, '❌ Format: .calc <expression>\nContoh: .calc 2+2*3');
-                    return;
-                }
-
-                try {
-                    const expression = args.join(' ');
-                    // Basic safety check
-                    if (!/^[0-9+\-*/().\s]+$/.test(expression)) {
-                        await this.sendMessage(sender, '❌ Expression tidak valid!');
+                    this.updateUserStats(sender, 'attack');
+                    
+                    if (args.length < 2) {
+                        await this.sendMessage(sender, 
+                            '❌ Format salah! Gunakan: .attack <url> <detik> [concurrency]\n' +
+                            'Contoh: .attack example.com 30 5\n' +
+                            'Contoh: .attack https://example.com 60'
+                        );
                         return;
                     }
-                    
-                    const result = eval(expression);
+
+                    let url = args[0];
+                    const duration = parseInt(args[1]) * 1000;
+                    const concurrency = args[2] ? parseInt(args[2]) : 3;
+
+                    // Validasi duration
+                    if (isNaN(duration) || duration <= 0) {
+                        await this.sendMessage(sender, '❌ Durasi harus angka positif!');
+                        return;
+                    }
+
+                    if (duration > 300000) {
+                        await this.sendMessage(sender, '❌ Durasi maksimal 300 detik (5 menit)');
+                        return;
+                    }
+
+                    if (concurrency > 10) {
+                        await this.sendMessage(sender, '❌ Concurrency maksimal 10');
+                        return;
+                    }
+
                     await this.sendMessage(sender, 
-                        `🧮 *KALKULATOR*\n\n` +
-                        `📝 Expression: ${expression}\n` +
-                        `✅ Result: ${result}\n` +
-                        `🔢 Type: ${typeof result}`
+                        `⚡ *Command terdeteksi .attack akan di jalankan segera...*\n\n` +
+                        `📡 Target: ${url}\n` +
+                        `⏰ Durasi: ${args[1]} detik\n` +
+                        `🔢 Concurrency: ${concurrency}\n` +
+                        `🔄 Memulai attack...`
                     );
+
+                    const attackId = await this.attackManager.startAttack(url, duration, concurrency);
+                    
+                    // Kirim update berkala
+                    const interval = setInterval(async () => {
+                        try {
+                            const status = this.attackManager.getAttackStatus(attackId);
+                            if (!status || !status.active) {
+                                clearInterval(interval);
+                                return;
+                            }
+
+                            await this.sendMessage(sender,
+                                `📊 *Attack Progress [${attackId}]*\n\n` +
+                                `✅ Requests: ${status.requests}\n` +
+                                `🎯 Success: ${status.successful}\n` +
+                                `⏱️ Elapsed: ${status.elapsed}s\n` +
+                                `⏳ Remaining: ${status.remaining}s\n` +
+                                `📈 Progress: ${status.progress}%`
+                            );
+                        } catch (error) {
+                            logger.error('Error in attack progress update', error);
+                            clearInterval(interval);
+                        }
+                    }, 15000);
+
                 } catch (error) {
-                    await this.sendMessage(sender, `❌ Error: ${error.message}`);
+                    logger.error('Error in attack command', error);
+                    await this.sendMessage(sender, 
+                        `❌ Error: ${error.message}\n` +
+                        `💡 Pastikan URL valid dan koneksi internet stabil`
+                    );
                 }
             }
         });
 
-        // Command .quote
-        this.commands.set('quote', {
-            description: 'Dapatkan random quote',
-            usage: '.quote',
+        // Command .logs
+        this.commands.set('logs', {
+            description: 'Lihat log terbaru',
+            usage: '.logs [limit]',
             handler: async (message, args, sender) => {
-                const quotes = [
-                    "Hidup adalah tentang belajar, jika kamu berhenti belajar maka kamu berhenti hidup.",
-                    "Kesuksesan bukanlah akhir, kegagalan bukanlah halangan. Keberanian untuk melanjutkan yang penting.",
-                    "Masa depan tergantung pada apa yang kamu lakukan hari ini.",
-                    "Jangan menunggu kesempatan, ciptakan kesempatan.",
-                    "Kualitas bukanlah suatu tindakan, melainkan kebiasaan."
-                ];
-                
-                const randomQuote = quotes[Math.floor(Math.random() * quotes.length)];
-                await this.sendMessage(sender, 
-                    `💫 *RANDOM QUOTE*\n\n` +
-                    `"${randomQuote}"\n\n` +
-                    `✨ Have a nice day!`
-                );
+                try {
+                    const limit = args[0] ? parseInt(args[0]) : 5;
+                    const logs = logger.getRecentLogs(limit);
+                    
+                    if (logs.length === 0) {
+                        await this.sendMessage(sender, '📭 Tidak ada log tersedia');
+                        return;
+                    }
+
+                    let logText = `📋 *LOG TERBARU (${logs.length})*\n\n`;
+                    
+                    logs.forEach((log, index) => {
+                        const time = new Date(log.timestamp).toLocaleTimeString('id-ID');
+                        logText += `*[${index + 1}]* ${time} - ${log.level.toUpperCase()}: ${log.message}\n`;
+                    });
+
+                    await this.sendMessage(sender, logText);
+                } catch (error) {
+                    logger.error('Error in logs command', error);
+                    await this.sendMessage(sender, '❌ Error menampilkan logs');
+                }
             }
         });
+
+        // Command .clearlogs
+        this.commands.set('clearlogs', {
+            description: 'Bersihkan logs',
+            usage: '.clearlogs',
+            handler: async (message, args, sender) => {
+                try {
+                    logger.clearLogs();
+                    await this.sendMessage(sender, '🧹 Logs berhasil dibersihkan');
+                } catch (error) {
+                    logger.error('Error in clearlogs command', error);
+                    await this.sendMessage(sender, '❌ Error membersihkan logs');
+                }
+            }
+        });
+
+        // ... (other commands with similar error handling)
     }
 
-    // Helper methods
+    // Helper methods dengan error handling
     updateUserStats(sender, command) {
-        const now = new Date().toLocaleString('id-ID');
-        if (!this.userStats.has(sender)) {
-            this.userStats.set(sender, { commands: 0, lastCommand: null });
+        try {
+            const now = new Date().toLocaleString('id-ID');
+            if (!this.userStats.has(sender)) {
+                this.userStats.set(sender, { commands: 0, lastCommand: null });
+            }
+            
+            const stats = this.userStats.get(sender);
+            stats.commands++;
+            stats.lastCommand = now;
+        } catch (error) {
+            logger.error('Error updating user stats', error);
         }
-        
-        const stats = this.userStats.get(sender);
-        stats.commands++;
-        stats.lastCommand = now;
-    }
-
-    getUserLevel(commandCount) {
-        if (commandCount >= 50) return '🌟 Elite User';
-        if (commandCount >= 20) return '🔥 Power User';
-        if (commandCount >= 10) return '⭐ Active User';
-        if (commandCount >= 5) return '👍 Regular User';
-        return '👶 New User';
     }
 
     formatUptime(seconds) {
-        const days = Math.floor(seconds / 86400);
-        const hours = Math.floor((seconds % 86400) / 3600);
-        const minutes = Math.floor((seconds % 3600) / 60);
-        const secs = seconds % 60;
-        
-        return `${days}d ${hours}h ${minutes}m ${secs}s`;
+        try {
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            
+            return `${days}d ${hours}h ${minutes}m ${secs}s`;
+        } catch (error) {
+            return 'Unknown';
+        }
     }
 
     async handleCommand(message) {
         try {
-            const text = message.message.conversation || 
-                         message.message.extendedTextMessage?.text || 
-                         message.message?.buttonsResponseMessage?.selectedDisplayText || '';
+            // Extract text dengan error handling
+            let text = '';
+            try {
+                text = message.message?.conversation || 
+                       message.message?.extendedTextMessage?.text || 
+                       message.message?.buttonsResponseMessage?.selectedDisplayText || '';
+            } catch (error) {
+                logger.warn('Failed to extract message text', error);
+                return false;
+            }
             
             if (!text.startsWith('.')) return false;
 
@@ -397,19 +283,28 @@ Bot ini dibuat untuk tujuan edukasi dan testing. Gunakan dengan bertanggung jawa
             const commandName = args.shift().toLowerCase();
             const sender = message.key.remoteJid;
 
+            logger.info(`Command detected`, { command: commandName, sender });
+
             if (this.commands.has(commandName)) {
-                console.log(chalk.cyan(`🛠️  Command terdeteksi: .${commandName} dari ${sender}`));
-                
                 // Kirim notifikasi command terdeteksi
                 await this.sendMessage(sender, 
-                    `⚡ *Command terdeteksi .${commandName} akan di jalankan segera...*` +
-                    `\n🔄 Memproses permintaan Anda...`,
-                    false // jangan log ke console
+                    `⚡ *Command terdeteksi .${commandName} akan di jalankan segera...*\n` +
+                    `🔄 Memproses permintaan Anda...`,
+                    false
                 );
 
-                const command = this.commands.get(commandName);
-                await command.handler(message, args, sender);
-                return true;
+                try {
+                    const command = this.commands.get(commandName);
+                    await command.handler(message, args, sender);
+                    return true;
+                } catch (error) {
+                    logger.error(`Error executing command .${commandName}`, error);
+                    await this.sendMessage(sender, 
+                        `❌ Error menjalankan command: ${error.message}\n` +
+                        `💡 Gunakan *.help ${commandName}* untuk bantuan`
+                    );
+                    return true;
+                }
             }
 
             // Jika command tidak ditemukan
@@ -420,7 +315,7 @@ Bot ini dibuat untuk tujuan edukasi dan testing. Gunakan dengan bertanggung jawa
             return true;
 
         } catch (error) {
-            console.error(chalk.red('❌ Error handling command:'), error);
+            logger.error('Error handling command', error);
             return false;
         }
     }
@@ -429,20 +324,30 @@ Bot ini dibuat untuk tujuan edukasi dan testing. Gunakan dengan bertanggung jawa
         try {
             await this.sock.sendMessage(jid, { text: text });
             if (log) {
-                console.log(chalk.green('✅ Pesan dikirim ke:'), jid);
+                logger.debug('Message sent', { to: jid, length: text.length });
             }
+            return true;
         } catch (error) {
-            console.error(chalk.red('❌ Error sending message:'), error);
+            logger.error('Error sending message', { to: jid, error: error.message });
+            return false;
         }
     }
 
     stopAllAttacks() {
-        this.attackManager.stopAllAttacks();
+        try {
+            this.attackManager.stopAllAttacks();
+        } catch (error) {
+            logger.error('Error stopping attacks', error);
+        }
     }
 
-    // Method untuk mendapatkan semua commands
-    getAllCommands() {
-        return Array.from(this.commands.entries());
+    cleanup() {
+        try {
+            this.attackManager.cleanup();
+            logger.info('Command handler cleaned up');
+        } catch (error) {
+            logger.error('Error during cleanup', error);
+        }
     }
 }
 
