@@ -3,18 +3,21 @@ import fs from 'fs-extra';
 import readlineSync from 'readline-sync';
 import { pino } from 'pino';
 import chalk from 'chalk';
+import qrcode from 'qrcode-terminal';
 import CommandHandler from './command.js';
 
 const CONFIG_FILE = './config.json';
 
-// Design functions
+// Enhanced design functions
 const design = {
-    box: (title, content) => {
+    box: (title, content, color = 'cyan') => {
         const lines = content.split('\n').filter(line => line.trim());
         const maxLength = Math.max(...lines.map(line => line.length), title.length + 4);
         
+        const colorFn = chalk[color] || chalk.cyan;
+        
         let result = `╭───${'─'.repeat(title.length)}───╮\n`;
-        result += `│   ${chalk.cyan.bold(title)}   │\n`;
+        result += `│   ${colorFn.bold(title)}   │\n`;
         result += `├${'─'.repeat(maxLength + 6)}┤\n`;
         
         lines.forEach(line => {
@@ -25,30 +28,18 @@ const design = {
         return result;
     },
 
-    header: (text) => {
-        return chalk.green.bold(`\n✨ ${text} ✨\n`);
-    },
-
-    success: (text) => {
-        return chalk.green(`✅ ${text}`);
-    },
-
-    error: (text) => {
-        return chalk.red(`❌ ${text}`);
-    },
-
-    warning: (text) => {
-        return chalk.yellow(`⚠️ ${text}`);
-    },
-
-    info: (text) => {
-        return chalk.blue(`ℹ️ ${text}`);
-    }
+    header: (text) => chalk.green.bold(`\n✨ ${text} ✨\n`),
+    success: (text) => chalk.green(`✅ ${text}`),
+    error: (text) => chalk.red(`❌ ${text}`),
+    warning: (text) => chalk.yellow(`⚠️ ${text}`),
+    info: (text) => chalk.blue(`ℹ️ ${text}`),
+    system: (text) => chalk.magenta(`⚙️ ${text}`),
+    admin: (text) => chalk.cyan(`👑 ${text}`)
 };
 
-// Logger untuk Baileys dengan design
+// Fixed logger untuk Baileys
 const baileysLogger = pino({ 
-    level: 'error',
+    level: 'silent',
     transport: {
         target: 'pino-pretty',
         options: {
@@ -62,7 +53,7 @@ const baileysLogger = pino({
 let commandHandler = null;
 let sock = null;
 let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 8;
+const MAX_RECONNECT_ATTEMPTS = 10;
 
 class WhatsAppBot {
     constructor() {
@@ -73,12 +64,40 @@ class WhatsAppBot {
         this.reconnectTimer = null;
     }
 
+    async setupAdmin() {
+        console.log('\n' + design.box('ADMIN SETUP', 'Setting up bot administrator', 'green'));
+        
+        console.log(design.info('Current admin: ' + (this.config.adminNumber || 'Not set')));
+        
+        const inputNumber = readlineSync.question('📱 Enter admin WhatsApp number (62xxx): ');
+        const adminNumber = inputNumber.replace(/\D/g, '');
+        
+        if (!adminNumber.startsWith('62')) {
+            this.config.adminNumber = '62' + adminNumber;
+        } else {
+            this.config.adminNumber = adminNumber;
+        }
+
+        this.config.selfMode = this.config.selfMode !== undefined ? this.config.selfMode : false;
+        
+        fs.writeJsonSync(CONFIG_FILE, this.config, { spaces: 2 });
+        
+        console.log(design.success(`Admin number set to: ${this.config.adminNumber}`));
+        console.log(design.info('Self mode: ' + (this.config.selfMode ? 'ON (Only admin can use bot)' : 'OFF (Everyone can use bot)')));
+        console.log(design.info('Continuing with bot startup...'));
+    }
+
     async initialize() {
-        console.log(design.header('INITIALIZING PREMIUM BOT'));
+        console.log(design.header('INITIALIZING PREMIUM BOT v4.0'));
         console.log(design.info('Loading configuration and preparing system...'));
         
         await this.loadConfig();
         
+        // Check if admin is set, if not, setup admin
+        if (!this.config.adminNumber) {
+            await this.setupAdmin();
+        }
+
         const authState = await useMultiFileAuthState('auth_info');
         this.state = authState.state;
         this.saveCreds = authState.saveCreds;
@@ -87,6 +106,9 @@ class WhatsAppBot {
         this.version = version;
         
         console.log(design.success('Bot initialized successfully'));
+        console.log(design.admin(`Admin: ${this.config.adminNumber}`));
+        console.log(design.info(`Self mode: ${this.config.selfMode ? 'ON' : 'OFF'}`));
+        
         return true;
     }
 
@@ -96,25 +118,37 @@ class WhatsAppBot {
                 this.config = fs.readJsonSync(CONFIG_FILE);
                 console.log(design.info('Configuration loaded from file'));
             } else {
-                this.config = {};
+                this.config = {
+                    phoneNumber: '',
+                    adminNumber: '',
+                    selfMode: false,
+                    pairingRequested: false,
+                    firstRun: true
+                };
                 console.log(design.info('Creating new configuration'));
             }
 
             if (!this.config.phoneNumber) {
-                console.log('\n' + design.box('PHONE REGISTRATION', 'Please enter your WhatsApp number'));
+                console.log('\n' + design.box('PHONE REGISTRATION', 'Please enter your WhatsApp number', 'green'));
                 const inputNumber = readlineSync.question('📱 Enter WhatsApp number (62xxx): ');
                 this.config.phoneNumber = inputNumber.replace(/\D/g, '');
+                
+                if (!this.config.phoneNumber.startsWith('62')) {
+                    this.config.phoneNumber = '62' + this.config.phoneNumber;
+                }
+                
                 fs.writeJsonSync(CONFIG_FILE, this.config, { spaces: 2 });
                 console.log(design.success(`Number ${this.config.phoneNumber} registered successfully`));
             }
+
         } catch (error) {
-            console.log(design.error('Configuration loading failed'));
+            console.log(design.error('Configuration loading failed: ' + error.message));
             throw error;
         }
     }
 
     async connect() {
-        console.log('\n' + design.header('ESTABLISHING CONNECTION'));
+        console.log('\n' + design.header('ESTABLISHING SECURE CONNECTION'));
         console.log(design.info('Creating secure WhatsApp connection...'));
 
         try {
@@ -126,360 +160,210 @@ class WhatsAppBot {
                 logger: baileysLogger,
                 markOnlineOnConnect: true,
                 syncFullHistory: false,
-                connectTimeoutMs: 45000,
-                keepAliveIntervalMs: 25000,
+                connectTimeoutMs: 60000,
+                keepAliveIntervalMs: 30000,
                 retryRequestDelayMs: 2000,
-                maxRetries: 4
+                maxRetries: 5,
+                emitOwnEvents: true,
+                defaultQueryTimeoutMs: 60000
             });
 
             this.setupEventHandlers();
-            commandHandler = new CommandHandler(sock);
+            commandHandler = new CommandHandler(sock, this.config);
 
-            console.log(design.success('Secure connection established'));
+            console.log(design.success('Connection established successfully'));
+            console.log(design.info('Bot is ready to receive commands'));
+            console.log(design.info('Type .menu in any chat to see available commands'));
+
+            this.isConnected = true;
+            reconnectAttempts = 0;
+
             return true;
+
         } catch (error) {
             console.log(design.error('Connection failed: ' + error.message));
+            await this.handleReconnection();
             return false;
         }
     }
 
     setupEventHandlers() {
-        sock.ev.on('creds.update', this.saveCreds);
+        sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect, qr } = update;
 
-        sock.ev.on('connection.update', (update) => {
-            this.handleConnectionUpdate(update);
+            if (qr) {
+                console.log('\n' + design.box('QR CODE SCAN REQUIRED', 'Please scan the QR code to authenticate', 'yellow'));
+                qrcode.generate(qr, { small: true });
+                console.log('\n' + design.info('Scan the QR code above with WhatsApp'));
+            }
+
+            if (connection === 'close') {
+                const shouldReconnect = (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut);
+                
+                console.log(design.warning(`Connection closed: ${lastDisconnect?.error?.message || 'Unknown reason'}`));
+                
+                if (shouldReconnect) {
+                    await this.handleReconnection();
+                } else {
+                    console.log(design.error('Logged out from WhatsApp. Please restart the bot.'));
+                    process.exit(1);
+                }
+            } else if (connection === 'open') {
+                console.log(design.success('Successfully connected to WhatsApp'));
+                this.isConnected = true;
+                reconnectAttempts = 0;
+            } else if (connection === 'connecting') {
+                console.log(design.info('Connecting to WhatsApp servers...'));
+            }
         });
+
+        sock.ev.on('creds.update', this.saveCreds);
 
         sock.ev.on('messages.upsert', async (m) => {
             try {
-                await this.handleMessages(m);
+                if (m.type !== 'notify') return;
+
+                const message = m.messages[0];
+                if (!message || !message.key) return;
+
+                // Skip messages from status broadcasts and group notifications
+                if (message.key.remoteJid === 'status@broadcast' || 
+                    (message.key.remoteJid.endsWith('@g.us') && !message.message)) {
+                    return;
+                }
+
+                // Handle commands
+                const isCommand = await commandHandler.handleCommand(message);
+                
+                if (!isCommand) {
+                    // Auto-response for non-commands
+                    const sender = message.key.remoteJid;
+                    const isGroup = sender.endsWith('@g.us');
+                    
+                    if (!isGroup && message.message && !message.key.fromMe) {
+                        const response = `
+╭───🤖 *AUTO RESPONSE* ───
+│
+│ 👋 Hello! I'm Premium Bot v4.0
+│ 📋 Type .menu to see commands
+│ ⚡ I can help with stress testing
+│
+│ 🚀 *Available Commands:*
+│ ◈ .menu - Show all commands
+│ ◈ .info - Bot information
+│ ◈ .idgc - Get group ID (group only)
+│
+│ 🔒 *Admin Commands:*
+│ ◈ .attack - Start stress test
+│ ◈ .stopattack - Stop attacks
+│ ◈ .stats - Show statistics
+│ ◈ .self - Toggle self mode
+│
+╰───────────────────────⪨
+                        `.trim();
+                        await sock.sendMessage(sender, { text: response.trim() });
+                    }
+                }
             } catch (error) {
                 console.log(design.error('Message processing error: ' + error.message));
             }
         });
 
-        sock.ev.on('connection.error', (error) => {
-            console.log(design.error('Connection error: ' + error.message));
-        });
+        // Handle other events
+        sock.ev.on('contacts.update', () => {});
+        sock.ev.on('chats.update', () => {});
+        sock.ev.on('presence.update', () => {});
     }
 
-    handleConnectionUpdate(update) {
-        const { connection, lastDisconnect } = update;
-        
-        if (connection === 'open') {
-            this.handleConnected();
-        } 
-        
-        if (connection === 'close') {
-            this.handleDisconnected(lastDisconnect);
-        }
-    }
-
-    handleConnected() {
-        this.isConnected = true;
-        reconnectAttempts = 0;
-        
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = null;
-        }
-        
-        console.log('\n' + design.box('CONNECTION SUCCESS', [
-            '✅ WhatsApp connection established',
-            '✅ Secure session saved',
-            '✅ Bot is now online and ready',
-            `✅ User: ${sock.user?.name || 'Unknown'}`,
-            '✅ Premium features activated'
-        ].join('\n')));
-
-        console.log('\n' + design.box('BOT READY', [
-            '🎯 Available commands:',
-            '◈ .menu - Show premium menu',
-            '◈ .attack - Start attack campaign', 
-            '◈ .stopattack - Stop all attacks',
-            '',
-            '⚡ Bot is listening for commands...'
-        ].join('\n')));
-        
-        if (this.config.pairingRequested) {
-            this.config.pairingRequested = false;
-            fs.writeJsonSync(CONFIG_FILE, this.config, { spaces: 2 });
-        }
-    }
-
-    handleDisconnected(lastDisconnect) {
-        this.isConnected = false;
-        
-        const statusCode = lastDisconnect?.error?.output?.statusCode;
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-        
-        console.log(design.warning('Connection interrupted'));
-
-        if (statusCode === DisconnectReason.loggedOut) {
-            console.log(design.box('SESSION EXPIRED', [
-                '🔒 Your session has expired',
-                '🔄 Please restart the bot',
-                '💡 Run: npm run reset',
-                '📋 This will clean and restart'
-            ].join('\n')));
-            process.exit(0);
-        }
-        
-        if (shouldReconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-            reconnectAttempts++;
-            const delayTime = Math.min(4000 * reconnectAttempts, 20000);
-            
-            console.log(design.info(`Reconnecting in ${delayTime/1000}s (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`));
-            
-            this.reconnectTimer = setTimeout(async () => {
-                await this.restart();
-            }, delayTime);
-        } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-            console.log(design.box('CONNECTION FAILED', [
-                '❌ Maximum reconnection attempts reached',
-                '🔧 Possible solutions:',
-                '◈ Check internet connection',
-                '◈ Restart the bot',
-                '◈ Use: npm run reset',
-                '📞 Contact support if persists'
-            ].join('\n')));
+    async handleReconnection() {
+        if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            console.log(design.error('Maximum reconnection attempts reached. Please restart the bot.'));
             process.exit(1);
         }
+
+        reconnectAttempts++;
+        const delayTime = Math.min(5000 * reconnectAttempts, 30000);
+        
+        console.log(design.warning(`Reconnecting in ${delayTime/1000} seconds... (Attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`));
+        
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = setTimeout(async () => {
+            console.log(design.info('Attempting to reconnect...'));
+            await this.connect();
+        }, delayTime);
     }
 
-    async handleMessages(m) {
-        try {
-            const message = m.messages[0];
-            if (!message.key.fromMe && m.type === 'notify') {
-                const sender = message.key.remoteJid;
-                
-                // Display command received in terminal
-                let text = '';
-                const msg = message.message;
-                
-                if (msg.conversation) {
-                    text = msg.conversation;
-                } else if (msg.extendedTextMessage && msg.extendedTextMessage.text) {
-                    text = msg.extendedTextMessage.text;
-                }
-
-                if (text && text.startsWith('.')) {
-                    const args = text.slice(1).trim().split(/ +/);
-                    const commandName = args.shift().toLowerCase();
-                    
-                    console.log('\n' + design.box('COMMAND RECEIVED', [
-                        `⏱️  Time: ${new Date().toLocaleTimeString('id-ID')}`,
-                        `👤 From: ${sender.split('@')[0]}`,
-                        `🔧 Command: .${commandName}`,
-                        `📋 Args: ${args.join(' ') || 'None'}`,
-                        `🔄 Status: Processing...`
-                    ].join('\n')));
-                }
-
-                // Handle command
-                const isCommand = await commandHandler.handleCommand(message);
-                
-                // Default response for non-commands
-                if (!isCommand && text && !text.startsWith('.')) {
-                    try {
-                        await sock.sendMessage(sender, { 
-                            text: this.createWelcomeMessage()
-                        });
-                    } catch (error) {
-                        console.log(design.error('Default message failed: ' + error.message));
-                    }
-                }
-            }
-        } catch (error) {
-            console.log(design.error('Message handling error: ' + error.message));
-        }
-    }
-
-    createWelcomeMessage() {
-        return `
-╭───👋 *WELCOME TO PREMIUM BOT* 👋───
-│
-│ 🎯 *AVAILABLE COMMANDS:*
-│ ◈ .menu - Show premium menu
-│ ◈ .attack <url> <sec> <threads> - Start attack
-│ ◈ .stopattack - Stop all attacks
-│
-│ ⚡ *BOT FEATURES:*
-│ ◈ Multi-thread technology
-│ ◈ Real-time monitoring
-│ ◈ Premium performance
-│
-│ 💡 *TIP:*
-│ ◈ All commands start with dot (.)
-│ ◈ Use .menu for detailed help
-│
-╰───────────────────────────────⪨
-        `;
-    }
-
-    async requestPairingCode() {
-        try {
-            const phoneNumber = this.config.phoneNumber.startsWith('62') ? 
-                this.config.phoneNumber : '62' + this.config.phoneNumber;
-            
-            console.log(design.info('Requesting pairing code...'));
-            
-            const code = await sock.requestPairingCode(phoneNumber);
-            
-            console.log('\n' + design.box('PAIRING REQUIRED', [
-                '📱 Pairing code generated successfully',
-                '🔢 Code: ' + chalk.bold.green(code),
-                '',
-                '📋 *INSTRUCTIONS:*',
-                '1. Open WhatsApp on your phone',
-                '2. Go to Settings → Linked Devices',
-                '3. Tap "Link a Device"',
-                '4. Enter the code above',
-                '5. Wait for connection',
-                '',
-                '⏳ This window will auto-update'
-            ].join('\n')));
-            
-            this.config.pairingRequested = true;
-            fs.writeJsonSync(CONFIG_FILE, this.config, { spaces: 2 });
-            
-        } catch (error) {
-            console.log(design.error('Pairing code failed: ' + error.message));
-            throw error;
-        }
-    }
-
-    async restart() {
-        console.log(design.info('Initiating system restart...'));
+    async cleanup() {
+        console.log(design.info('Cleaning up resources...'));
+        
         if (commandHandler) {
             commandHandler.cleanup();
         }
         
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = null;
-        }
+        clearTimeout(this.reconnectTimer);
         
         if (sock) {
             try {
                 await sock.end();
+                console.log(design.success('Connection closed gracefully'));
             } catch (error) {
-                // Silent cleanup
+                console.log(design.error('Error closing connection: ' + error.message));
             }
-            sock = null;
         }
-        
-        commandHandler = null;
-        await this.start();
     }
 
     async start() {
         try {
-            const initialized = await this.initialize();
-            if (!initialized) {
-                throw new Error('System initialization failed');
-            }
+            await this.initialize();
+            await this.connect();
 
-            const connected = await this.connect();
-            if (!connected) {
-                throw new Error('Connection establishment failed');
-            }
+            // Graceful shutdown handler
+            process.on('SIGINT', async () => {
+                console.log('\n' + design.header('SHUTTING DOWN BOT'));
+                await this.cleanup();
+                process.exit(0);
+            });
 
-            if (!this.state.creds.registered) {
-                setTimeout(async () => {
-                    try {
-                        await this.requestPairingCode();
-                    } catch (error) {
-                        console.log(design.error('Pairing failed: ' + error.message));
-                        console.log(design.info('Retrying in 15 seconds...'));
-                        await delay(15000);
-                        await this.restart();
-                    }
-                }, 3500);
-            }
+            process.on('SIGTERM', async () => {
+                console.log('\n' + design.header('SHUTTING DOWN BOT'));
+                await this.cleanup();
+                process.exit(0);
+            });
 
-            console.log(design.info('System ready - Waiting for connection...'));
+            process.on('uncaughtException', async (error) => {
+                console.log(design.error('Uncaught Exception: ' + error.message));
+                await this.cleanup();
+                process.exit(1);
+            });
+
+            process.on('unhandledRejection', async (reason, promise) => {
+                console.log(design.error('Unhandled Rejection at: ' + promise + ' reason: ' + reason));
+                await this.cleanup();
+                process.exit(1);
+            });
 
         } catch (error) {
-            console.log(design.error('Startup failed: ' + error.message));
-            console.log(design.info('Restarting in 15 seconds...'));
-            await delay(15000);
-            await this.restart();
+            console.log(design.error('Bot startup failed: ' + error.message));
+            console.log(design.error('Stack: ' + error.stack));
+            process.exit(1);
         }
-    }
-
-    async shutdown() {
-        console.log('\n' + design.box('SYSTEM SHUTDOWN', [
-            '👋 Initiating graceful shutdown',
-            '🛑 Stopping all processes',
-            '🧹 Cleaning up resources',
-            '📊 Saving final logs',
-            '✅ Shutdown complete'
-        ].join('\n')));
-        
-        if (commandHandler) {
-            commandHandler.cleanup();
-        }
-        
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-        }
-        
-        if (sock) {
-            try {
-                await sock.end();
-            } catch (error) {
-                // Silent shutdown
-            }
-        }
-        
-        console.log(design.success('Bot shutdown successfully'));
     }
 }
 
-// Global bot instance
-let bot = null;
+// Enhanced startup sequence
+console.log(`
+╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║                🚀 PREMIUM BOT v4.0 STARTING 🚀               ║
+║              ⭐ With Admin Control & Features ⭐              ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+`);
 
-async function startBot() {
-    bot = new WhatsAppBot();
-    await bot.start();
-}
-
-// Signal handlers
-process.on('SIGINT', async () => {
-    console.log('\n');
-    if (bot) {
-        await bot.shutdown();
-    }
-    process.exit(0);
-});
-
-process.on('SIGTERM', async () => {
-    console.log('\n');
-    if (bot) {
-        await bot.shutdown();
-    }
-    process.exit(0);
-});
-
-process.on('exit', (code) => {
-    console.log(design.info(`Process exited with code: ${code}`));
-});
-
-// Clear console and start
-console.clear();
-console.log('\n' + design.box('PREMIUM WHATSAPP BOT', [
-    '🚀 Version 2.0 - Premium Edition',
-    '⭐ Enhanced with beautiful UI',
-    '⚡ Powered by Baileys API',
-    '🔒 Secure connection',
-    '🎯 3 Powerful commands',
-    '',
-    '📋 Starting system...'
-].join('\n')));
-
-// Start the bot
-startBot().catch(error => {
+const bot = new WhatsAppBot();
+bot.start().catch(error => {
     console.log(design.error('Fatal startup error: ' + error.message));
     process.exit(1);
 });
+
+export { sock };
