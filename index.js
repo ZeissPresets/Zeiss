@@ -1,8 +1,9 @@
-const { default: makeWASocket, useSingleFileAuthState, delay } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, DisconnectReason, useMultiFileAuthState } = require('@whiskeysockets/baileys');
 const { readFile, writeFile, existsSync } = require('fs');
 const { promisify } = require('util');
 const path = require('path');
 const chalk = require('chalk');
+const qrcode = require('qrcode-terminal');
 const commandHandler = require('./command');
 
 const readFileAsync = promisify(readFile);
@@ -52,39 +53,42 @@ async function initializeBot() {
       log('Config file created successfully', 'success');
     }
 
-    const { state, saveState } = useSingleFileAuthState('auth_info.json');
+    // Gunakan useMultiFileAuthState sebagai ganti useSingleFileAuthState
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info');
     const sock = makeWASocket({
       auth: state,
-      printQRInTerminal: true,
+      printQRInTerminal: false, // Kita akan handle QR sendiri
       logger: {
-        level: 'silent' // Nonaktifkan logger bawaan Baileys
+        level: 'silent'
       }
     });
 
-    // Event handlers
+    // Handle QR code
     sock.ev.on('connection.update', async (update) => {
-      const { connection, qr, isNewLogin } = update;
-
-      if (connection === 'close') {
-        log('Connection closed!', 'error');
-        process.exit(1);
-      }
+      const { connection, qr, isNewLogin, lastDisconnect } = update;
 
       if (qr) {
-        log('QR code generated, please scan', 'warning');
+        console.log('\n');
+        log('Scan QR code below:', 'warning');
+        qrcode.generate(qr, { small: true });
+        console.log('\n');
       }
 
-      if (isNewLogin) {
-        log('New login detected!', 'warning');
-      }
-
-      if (connection === 'open') {
+      if (connection === 'close') {
+        const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+        log('Connection closed. ' + (shouldReconnect ? 'Reconnecting...' : 'Please restart bot.'), 'error');
+        
+        if (shouldReconnect) {
+          initializeBot();
+        }
+      } else if (connection === 'open') {
         log('WhatsApp connected successfully!', 'success');
         log(`Logged in as: ${config.phoneNumber}`, 'info');
       }
     });
 
-    sock.ev.on('creds.update', saveState);
+    // Save credentials when updated
+    sock.ev.on('creds.update', saveCreds);
 
     // Handle incoming messages
     sock.ev.on('messages.upsert', async ({ messages }) => {
@@ -112,13 +116,6 @@ async function initializeBot() {
             text: `❌ Error: ${error.message}` 
           });
         }
-      }
-    });
-
-    // Handle errors
-    sock.ev.on('connection.update', (update) => {
-      if (update.lastDisconnect && update.lastDisconnect.error) {
-        log(`Connection error: ${update.lastDisconnect.error.output.statusCode}`, 'error');
       }
     });
 

