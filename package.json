@@ -1,34 +1,14 @@
 {
-  "name": "wa-bot-premium",
-  "version": "4.0.0",
-  "description": "Premium WhatsApp Bot with Admin Control & Enhanced Features",
+  "name": "whatsapp-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp Bot with Baileys",
   "main": "index.js",
-  "type": "module",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node index.js --dev",
-    "clean": "rm -rf auth_info config.json logs",
-    "reset": "npm run clean && npm start",
-    "logs": "tail -f logs/bot.log"
+    "start": "node index.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.4.0",
-    "fs-extra": "^11.1.1",
-    "readline-sync": "^1.4.10",
-    "pino": "^8.15.0",
     "axios": "^1.6.0",
-    "chalk": "^4.1.2",
-    "qrcode-terminal": "^0.12.0"
-  },
-  "keywords": [
-    "whatsapp",
-    "bot",
-    "baileys",
-    "premium",
-    "admin",
-    "ddos",
-    "stress-test"
-  ],
-  "author": "Premium Bot Developer",
-  "license": "MIT"
+    "chalk": "^4.1.2"
+  }
 }
