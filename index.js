@@ -56,63 +56,85 @@ function isAdmin(sender) {
     return cleanSender.endsWith(cleanAdmin) || cleanAdmin.endsWith(cleanSender);
 }
 
+function generateQRCode(qr) {
+    console.log('\n╔══════════════════════════════════════════╗');
+    console.log('║           SCAN QR CODE BELOW             ║');
+    console.log('║      To connect your WhatsApp account    ║');
+    console.log('╚══════════════════════════════════════════╝\n');
+    qrcode.generate(qr, { small: true });
+    console.log('\n╔══════════════════════════════════════════╗');
+    console.log('║     Waiting for QR code scan...          ║');
+    console.log('╚══════════════════════════════════════════╝\n');
+}
+
 async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info');
-    
-    sock = makeWASocket({
-        auth: state,
-        printQRInTerminal: true,
-        browser: Browsers.macOS('Desktop'),
-        markOnlineOnConnect: true,
-    });
-
-    sock.ev.on('creds.update', saveCreds);
-
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
+    try {
+        const { state, saveCreds } = await useMultiFileAuthState('auth_info');
         
-        if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+        sock = makeWASocket({
+            auth: state,
+            printQRInTerminal: false,
+            browser: Browsers.macOS('Desktop'),
+            markOnlineOnConnect: true,
+        });
+
+        sock.ev.on('creds.update', saveCreds);
+
+        sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect, qr } = update;
             
-            if (shouldReconnect) {
-                console.log('Connection closed. Reconnecting...');
-                await delay(3000);
-                connectToWhatsApp();
-            } else {
-                console.log('Connection closed. You are logged out.');
+            if (qr) {
+                generateQRCode(qr);
             }
-        } else if (connection === 'open') {
-            console.log('\n╔══════════════════════════════════════════╗');
-            console.log('║          CONNECTED SUCCESSFULLY!          ║');
-            console.log('╚══════════════════════════════════════════╝\n');
-            console.log('WhatsApp bot is now connected and ready.');
-            console.log('Admin number:', config.adminNumber);
-        }
-    });
+            
+            if (connection === 'close') {
+                const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+                
+                if (shouldReconnect) {
+                    console.log('Connection closed. Reconnecting...');
+                    await delay(3000);
+                    connectToWhatsApp();
+                } else {
+                    console.log('Connection closed. You are logged out.');
+                }
+            } else if (connection === 'open') {
+                console.log('\n╔══════════════════════════════════════════╗');
+                console.log('║          CONNECTED SUCCESSFULLY!          ║');
+                console.log('╚══════════════════════════════════════════╝\n');
+                console.log('WhatsApp bot is now connected and ready.');
+                console.log('Admin number:', config.adminNumber);
+            }
+        });
 
-    sock.ev.on('messages.upsert', async (m) => {
-        const message = m.messages[0];
-        if (!message.message) return;
-        
-        const sender = message.key.remoteJid;
-        
-        if (!isAdmin(sender)) {
-            console.log('Message from non-admin ignored:', sender);
-            return;
-        }
-        
-        const messageType = Object.keys(message.message)[0];
-        const text = message.message.conversation || 
-                    message.message.extendedTextMessage?.text || '';
-        
-        const pushName = message.pushName || 'Unknown';
-        
-        console.log(`Received message from admin ${pushName}: ${text}`);
-        
-        if (text.startsWith('.') || text.startsWith('!')) {
-            await handleCommand(sock, sender, text, pushName);
-        }
-    });
+        sock.ev.on('messages.upsert', async (m) => {
+            const message = m.messages[0];
+            if (!message.message) return;
+            
+            const sender = message.key.remoteJid;
+            
+            if (!isAdmin(sender)) {
+                console.log('Message from non-admin ignored:', sender);
+                return;
+            }
+            
+            const messageType = Object.keys(message.message)[0];
+            const text = message.message.conversation || 
+                        message.message.extendedTextMessage?.text || '';
+            
+            const pushName = message.pushName || 'Unknown';
+            
+            console.log(`Received message from admin ${pushName}: ${text}`);
+            
+            if (text.startsWith('.') || text.startsWith('!')) {
+                await handleCommand(sock, sender, text, pushName);
+            }
+        });
+    } catch (error) {
+        console.error('Error in connectToWhatsApp:', error);
+        console.log('Trying to reconnect in 5 seconds...');
+        await delay(5000);
+        connectToWhatsApp();
+    }
 }
 
 function displayWelcome() {
@@ -173,10 +195,26 @@ async function main() {
 process.on('SIGINT', async () => {
     console.log('Shutting down...');
     if (sock) {
-        await sock.logout();
+        try {
+            await sock.logout();
+        } catch (e) {
+            console.log('Error during logout:', e.message);
+        }
     }
     rl.close();
     process.exit(0);
 });
 
-main().catch(console.error);
+process.on('uncaughtException', (error) => {
+    console.error('Uncaught Exception:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+main().catch(error => {
+    console.error('Fatal error:', error);
+    rl.close();
+    process.exit(1);
+});
