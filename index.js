@@ -12,6 +12,31 @@ const rl = readline.createInterface({
 let sock = null;
 let config = {};
 
+// Fungsi logging yang keren
+function logInfo(message) {
+    console.log(`\x1b[36m[INFO]\x1b[0m ${message}`);
+}
+
+function logSuccess(message) {
+    console.log(`\x1b[32m[SUCCESS]\x1b[0m ${message}`);
+}
+
+function logWarning(message) {
+    console.log(`\x1b[33m[WARNING]\x1b[0m ${message}`);
+}
+
+function logError(message) {
+    console.log(`\x1b[31m[ERROR]\x1b[0m ${message}`);
+}
+
+function logCommand(message) {
+    console.log(`\x1b[35m[COMMAND]\x1b[0m ${message}`);
+}
+
+function logAttack(message) {
+    console.log(`\x1b[91m[ATTACK]\x1b[0m ${message}`);
+}
+
 function askQuestion(question) {
     return new Promise((resolve) => {
         rl.question(question, (answer) => {
@@ -28,7 +53,7 @@ function loadConfig() {
             return true;
         }
     } catch (error) {
-        console.log('Error loading config:', error.message);
+        logError(`Loading config: ${error.message}`);
     }
     return false;
 }
@@ -38,7 +63,7 @@ function saveConfig() {
         fs.writeFileSync('config.json', JSON.stringify(config, null, 2));
         return true;
     } catch (error) {
-        console.log('Error saving config:', error.message);
+        logError(`Saving config: ${error.message}`);
         return false;
     }
 }
@@ -91,18 +116,18 @@ async function connectToWhatsApp() {
                 const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
                 
                 if (shouldReconnect) {
-                    console.log('Connection closed. Reconnecting...');
+                    logWarning('Connection closed. Reconnecting...');
                     await delay(3000);
                     connectToWhatsApp();
                 } else {
-                    console.log('Connection closed. You are logged out.');
+                    logError('Connection closed. You are logged out.');
                 }
             } else if (connection === 'open') {
                 console.log('\n╔══════════════════════════════════════════╗');
                 console.log('║          CONNECTED SUCCESSFULLY!          ║');
                 console.log('╚══════════════════════════════════════════╝\n');
-                console.log('WhatsApp bot is now connected and ready.');
-                console.log('Admin number:', config.adminNumber);
+                logSuccess('WhatsApp bot is now connected and ready.');
+                logInfo(`Admin number: ${config.adminNumber}`);
             }
         });
 
@@ -113,7 +138,7 @@ async function connectToWhatsApp() {
             const sender = message.key.remoteJid;
             
             if (!isAdmin(sender)) {
-                console.log('Message from non-admin ignored:', sender);
+                logWarning(`Message from non-admin ignored: ${sender}`);
                 return;
             }
             
@@ -123,15 +148,16 @@ async function connectToWhatsApp() {
             
             const pushName = message.pushName || 'Unknown';
             
-            console.log(`Received message from admin ${pushName}: ${text}`);
+            logInfo(`Received message from admin ${pushName}: ${text}`);
             
             if (text.startsWith('.') || text.startsWith('!')) {
+                logCommand(`Processing command: ${text}`);
                 await handleCommand(sock, sender, text, pushName);
             }
         });
     } catch (error) {
-        console.error('Error in connectToWhatsApp:', error);
-        console.log('Trying to reconnect in 5 seconds...');
+        logError(`connectToWhatsApp: ${error.message}`);
+        logWarning('Trying to reconnect in 5 seconds...');
         await delay(5000);
         connectToWhatsApp();
     }
@@ -146,26 +172,26 @@ function displayWelcome() {
 
 async function setupAdmin() {
     if (loadConfig() && config.adminNumber) {
-        console.log('Admin number found:', config.adminNumber);
+        logInfo(`Admin number found: ${config.adminNumber}`);
         return true;
     }
     
-    console.log('No admin configuration found.');
+    logWarning('No admin configuration found.');
     
     let adminNumber = await askQuestion('Enter admin WhatsApp number (with country code, e.g., +628123456789): ');
     
     while (!validatePhoneNumber(adminNumber)) {
-        console.log('Invalid phone number format. Please include country code (e.g., +628123456789)');
+        logError('Invalid phone number format. Please include country code (e.g., +628123456789)');
         adminNumber = await askQuestion('Enter admin WhatsApp number: ');
     }
     
     config.adminNumber = adminNumber;
     
     if (saveConfig()) {
-        console.log('Admin number saved successfully.');
+        logSuccess('Admin number saved successfully.');
         return true;
     } else {
-        console.log('Failed to save admin number.');
+        logError('Failed to save admin number.');
         return false;
     }
 }
@@ -176,29 +202,30 @@ async function main() {
     try {
         const setupSuccess = await setupAdmin();
         if (!setupSuccess) {
-            console.log('Setup failed. Exiting...');
+            logError('Setup failed. Exiting...');
             rl.close();
             process.exit(1);
         }
         
-        console.log('\nInitializing WhatsApp connection...');
-        console.log('Generating QR code for authentication...\n');
+        logInfo('Initializing WhatsApp connection...');
+        logInfo('Generating QR code for authentication...\n');
         
         await connectToWhatsApp();
     } catch (error) {
-        console.error('Failed to initialize:', error);
+        logError(`Failed to initialize: ${error.message}`);
         rl.close();
         process.exit(1);
     }
 }
 
 process.on('SIGINT', async () => {
-    console.log('Shutting down...');
+    logWarning('Shutting down...');
     if (sock) {
         try {
             await sock.logout();
+            logSuccess('Logged out successfully.');
         } catch (e) {
-            console.log('Error during logout:', e.message);
+            logError(`Error during logout: ${e.message}`);
         }
     }
     rl.close();
@@ -206,15 +233,15 @@ process.on('SIGINT', async () => {
 });
 
 process.on('uncaughtException', (error) => {
-    console.error('Uncaught Exception:', error);
+    logError(`Uncaught Exception: ${error.message}`);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    logError(`Unhandled Rejection at: ${promise}, reason: ${reason}`);
 });
 
 main().catch(error => {
-    console.error('Fatal error:', error);
+    logError(`Fatal error: ${error.message}`);
     rl.close();
     process.exit(1);
 });
