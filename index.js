@@ -1,308 +1,107 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
-const chalk = require('chalk');
-const chalkAnimation = require('chalk-animation');
-const figlet = require('figlet');
-const inquirer = require('inquirer');
-const Spinner = require('cli-spinner').Spinner;
-const boxen = require('boxen');
-const gradient = require('gradient-string');
-const MenuHandler = require('./menu');
-const { performance } = require('perf_hooks');
+const menu = require('./menu');
+const path = require('path');
+const fs = require('fs');
 
-class WhatsAppBot {
-    constructor() {
-        this.sock = null;
-        this.authState = null;
-        this.isConnected = false;
-        this.spinner = new Spinner('%s ');
-        this.spinner.setSpinnerString('|/-\\');
-        this.menuHandler = null;
-        this.connectionStartTime = null;
-    }
-
-    // Animasi startup
-    async showWelcome() {
-        console.clear();
-        
-        const banner = await new Promise((resolve) => {
-            figlet('WHATSAPP BOT DEMO VERSION', {
-                font: 'Standard',
-                horizontalLayout: 'default',
-                verticalLayout: 'default'
-            }, (err, data) => {
-                if (err) return resolve('');
-                resolve(data);
-            });
-        });
-
-        const rainbowBanner = gradient.rainbow(banner);
-        console.log(rainbowBanner);
-
-        const subtitle = gradient.pastel.multiline(`
-╔══════════════════════════════════════════════════════════╗
-║                WHATSAPPS BOT SYSTEM(DEMO)                ║
-║                 Version 3.0 • Ultimate                   ║
-║               DDoS Protection • Advanced                 ║
-╚══════════════════════════════════════════════════════════╝
-        `);
-
-        console.log(subtitle);
-        console.log('\n');
-    }
-
-    // Start spinner dengan style
-    startSpinner(text) {
-        this.spinner = new Spinner(chalk.blue(`%s ${text}`));
-        this.spinner.setSpinnerString(18);
-        this.spinner.start();
-    }
-
-    // Stop spinner
-    stopSpinner() {
-        if (this.spinner.isSpinning()) {
-            this.spinner.stop(true);
-        }
-    }
-
-    // Box message yang stylish
-    showBox(message, color = 'green') {
-        const box = boxen(message, {
-            padding: 1,
-            margin: 1,
-            borderStyle: 'round',
-            borderColor: color,
-            backgroundColor: '#000000'
-        });
-        console.log(box);
-    }
-
-    // Fungsi untuk menghubungkan ke WhatsApp
-    async connect(phoneNumber) {
+function loadOrCreateConfig() {
+    const configPath = path.join(__dirname, 'config.json');
+    
+    if (fs.existsSync(configPath)) {
         try {
-            this.connectionStartTime = performance.now();
-            this.startSpinner('[SYSTEM] MEMULAI SISTEM...');
-
-            // Validasi nomor telepon
-            if (!phoneNumber || !phoneNumber.match(/^\d+$/)) {
-                throw new Error('Invalid phone number format');
-            }
-
-            const formattedNumber = `${phoneNumber}@s.whatsapp.net`;
-
-            this.stopSpinner();
-            this.showBox(`📱 CONNECTING TO: ${formattedNumber}`, 'blue');
-
-            // Menggunakan multi file auth state
-            this.startSpinner('🔐 Loading secure session...');
-            const { state, saveCreds } = await useMultiFileAuthState('auth_info');
-            this.authState = state;
-            this.stopSpinner();
-
-            // Membuat socket connection
-            this.startSpinner('🌐 Establishing secure connection...');
-            this.sock = makeWASocket({
-                auth: state,
-                printQRInTerminal: false,
-                browser: Browsers.macOS('Desktop'),
-                logger: { level: 'silent' },
-                markOnlineOnConnect: true,
-                syncFullHistory: false,
-                transactionOpts: {
-                    maxCommitRetries: 10,
-                    delayBetweenTries: 3000
-                }
-            });
-            this.stopSpinner();
-
-            // Initialize menu handler
-            this.menuHandler = new MenuHandler(this.sock);
-
-            // Handle events
-            this.setupEventHandlers(saveCreds);
-
+            const configData = fs.readFileSync(configPath, 'utf8');
+            return JSON.parse(configData);
         } catch (error) {
-            this.stopSpinner();
-            this.showBox(`❌ CONNECTION FAILED: ${error.message}`, 'red');
-            this.cleanup();
-            process.exit(1);
+            return { adminNumber: null };
         }
-    }
-
-    // Setup event handlers
-    setupEventHandlers(saveCreds) {
-        this.sock.ev.on('connection.update', (update) => {
-            const { connection, lastDisconnect, qr } = update;
-
-            if (qr) {
-                this.stopSpinner();
-                console.log('\n');
-                this.showBox('📲 SCAN QR CODE BELOW', 'yellow');
-                
-                console.log(chalk.yellow('╔══════════════════════════════════════╗'));
-                console.log(chalk.yellow('║                                      ║'));
-                qrcode.generate(qr, { small: true });
-                console.log(chalk.yellow('║                                      ║'));
-                console.log(chalk.yellow('╚══════════════════════════════════════╝'));
-                
-                console.log(chalk.cyan('\n💡 WhatsApp → Three Dots → Linked Devices → Link Device'));
-            }
-
-            if (connection === 'open') {
-                this.isConnected = true;
-                this.stopSpinner();
-                
-                const connectionTime = (performance.now() - this.connectionStartTime).toFixed(0);
-                const successAnimation = chalkAnimation.rainbow(`\n✅ CONNECTION ESTABLISHED IN ${connectionTime}ms`);
-                
-                setTimeout(() => {
-                    successAnimation.stop();
-                    this.showConnectionInfo();
-                }, 2000);
-            }
-
-            if (connection === 'close') {
-                const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-                
-                if (shouldReconnect) {
-                    this.startSpinner('🔄 Reconnecting to network...');
-                    setTimeout(() => {
-                        this.connect(this.sock?.user?.id.split(':')[0] || '');
-                    }, 5000);
-                } else {
-                    this.showBox('❌ LOGGED OUT. Delete auth_info folder and rescan QR.', 'red');
-                    this.cleanup();
-                }
-            }
-        });
-
-        this.sock.ev.on('creds.update', saveCreds);
-
-        // Handle incoming messages dengan menu handler
-        this.sock.ev.on('messages.upsert', async ({ messages }) => {
-            const message = messages[0];
-            if (message.key.fromMe) return;
-
-            try {
-                await this.menuHandler.handleMessage(message);
-            } catch (error) {
-                console.error('Message handling error:', error);
-            }
-        });
-
-        // Handle connection errors
-        this.sock.ev.on('connection.quality.update', (update) => {
-            const { quality, latency } = update;
-            if (quality < 0.5) {
-                console.log(chalk.yellow('⚠️  Connection quality degraded'));
-            }
-        });
-    }
-
-    // Menampilkan info koneksi
-    async showConnectionInfo() {
-        if (this.sock?.user) {
-            const userInfo = `
-🤖 ELITE BOT SYSTEM ONLINE
-
-👤 User: ${this.sock.user.name || 'Unknown'}
-📞 Number: ${this.sock.user.id}
-🌐 Platform: ${this.sock.user.platform || 'Unknown'}
-🕒 Connected: ${new Date().toLocaleString()}
-⚡ Connection Time: ${(performance.now() - this.connectionStartTime).toFixed(0)}ms
-
-⭐ Status: ${chalk.green('OPERATIONAL')}
-🔧 Mode: ${chalk.yellow('ULTRA PERFORMANCE')}
-            `;
-
-            this.showBox(userInfo, 'green');
-            
-            console.log(chalk.yellow('\n🎯 AVAILABLE COMMANDS:'));
-            console.log(chalk.cyan('   • .menu - Show command menu'));
-            console.log(chalk.cyan('   • .attack <url> <time> - DDoS attack'));
-            console.log(chalk.cyan('   • .ping <url> - Check target status'));
-            console.log(chalk.cyan('   • .stop <id> - Stop attack'));
-            console.log(chalk.cyan('   • .list - Show active attacks'));
-            
-            console.log(chalk.gray('\n──────────────────────────────────────────────────'));
-            console.log(chalk.yellow('💡 Press CTRL+C to exit the application'));
-        }
-    }
-
-    // Cleanup resources
-    cleanup() {
-        if (this.sock) {
-            this.sock.end();
-            this.sock = null;
-        }
-        
-        if (this.menuHandler) {
-            this.menuHandler.cleanup();
-        }
-        
-        this.isConnected = false;
+    } else {
+        const defaultConfig = { adminNumber: null };
+        fs.writeFileSync(configPath, JSON.stringify(defaultConfig, null, 2));
+        return defaultConfig;
     }
 }
 
-// Fungsi untuk membaca input dari user
-function askQuestion(query) {
-    const rl = require('readline').createInterface({
-        input: process.stdin,
-        output: process.stdout,
+function saveConfig(config) {
+    const configPath = path.join(__dirname, 'config.json');
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+}
+
+async function connectToWhatsApp() {
+    const config = loadOrCreateConfig();
+    
+    if (!config.adminNumber) {
+        const readline = require('readline').createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+        
+        readline.question('Masukkan nomor WhatsApp admin: ', (number) => {
+            if (!number.includes('@s.whatsapp.net')) {
+                number = number + '@s.whatsapp.net';
+            }
+            
+            config.adminNumber = number;
+            saveConfig(config);
+            
+            readline.close();
+            initializeBot(config);
+        });
+    } else {
+        initializeBot(config);
+    }
+}
+
+async function initializeBot(config) {
+    const sessionFolder = path.join(__dirname, 'session');
+    if (!fs.existsSync(sessionFolder)) {
+        fs.mkdirSync(sessionFolder);
+    }
+
+    const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
+    
+    const sock = makeWASocket({
+        auth: state,
+        printQRInTerminal: true,
+        browser: Browsers.ubuntu('Chrome')
     });
 
-    return new Promise(resolve => rl.question(query, ans => {
-        rl.close();
-        resolve(ans);
-    }));
-}
-
-// Fungsi utama
-async function main() {
-    const bot = new WhatsAppBot();
-    
-    try {
-        // Tampilkan welcome screen
-        await bot.showWelcome();
-
-        // Prompt input yang stylish
-        const questions = [
-            {
-                type: 'input',
-                name: 'phoneNumber',
-                message: chalk.blue('📞 ENTER WHATSAPP NUMBER (ex: 6281234567890):'),
-                validate: (input) => {
-                    if (!input) return 'Number cannot be empty!';
-                    if (!input.match(/^\d+$/)) return 'Only numbers allowed!';
-                    if (input.length < 10) return 'Number too short!';
-                    return true;
-                }
-            }
-        ];
-
-        const answers = await inquirer.prompt(questions);
+    sock.ev.on('connection.update', (update) => {
+        const { connection, lastDisconnect, qr } = update;
         
-        const loading = chalkAnimation.rainbow('\n🚀 INITIALIZING ELITE BOT SYSTEM');
-        setTimeout(async () => {
-            loading.stop();
-            await bot.connect(answers.phoneNumber.trim());
-        }, 2000);
+        if (qr) {
+            qrcode.generate(qr, { small: true });
+        }
+        
+        if (connection === 'close') {
+            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            
+            if (shouldReconnect) {
+                connectToWhatsApp();
+            }
+        } else if (connection === 'open') {
+            if (config.adminNumber) {
+                const text = "Bot WhatsApp Admin telah aktif! Ketik .menu untuk melihat daftar perintah.";
+                sock.sendMessage(config.adminNumber, { text: text });
+            }
+        }
+    });
 
-        // Handle process termination
-        process.on('SIGINT', () => {
-            console.log('\n');
-            bot.showBox('🛑 SHUTTING DOWN BOT SYSTEM... THANK YOU!', 'yellow');
-            bot.cleanup();
-            process.exit(0);
-        });
-
-    } catch (error) {
-        console.error(chalk.red('❌ FATAL ERROR:'), error.message);
-        process.exit(1);
-    }
+    sock.ev.on('creds.update', saveCreds);
+    
+    sock.ev.on('messages.upsert', async (m) => {
+        const message = m.messages[0];
+        if (m.type === 'notify') {
+            const messageText = message.message?.conversation || 
+                               message.message?.extendedTextMessage?.text || 
+                               message.message?.buttonsResponseMessage?.selectedButtonId ||
+                               '';
+            const sender = message.key.remoteJid;
+            
+            const isAdmin = sender === config.adminNumber;
+            
+            await menu.handleCommand(sock, sender, messageText, isAdmin);
+        }
+    });
 }
 
-// Jalankan aplikasi
-if (require.main === module) {
-    main().catch(console.error);
-}
+connectToWhatsApp();
