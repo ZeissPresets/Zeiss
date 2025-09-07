@@ -1,23 +1,30 @@
 {
   "name": "whatsapp-admin-bot",
-  "version": "1.0.0",
-  "description": "WhatsApp Admin Bot dengan fitur menu, attack, ip, dan port",
+  "version": "4.5.0",
+  "description": "WhatsApp Admin Bot dengan Reply System dan Enhanced Features",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "logs": "tail -f logs/bot.log"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.4.0",
     "qrcode-terminal": "^0.12.0",
     "axios": "^1.6.0",
     "dns": "^0.2.2",
-    "net": "^1.0.2"
+    "net": "^1.0.2",
+    "chalk": "^4.1.2",
+    "node-emoji": "^1.11.0",
+    "winston": "^3.11.0",
+    "ping": "^0.4.4",
+    "user-agents": "^1.0.1327"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
   },
-  "keywords": ["whatsapp", "bot", "admin", "network"],
-  "author": "Your Name",
+  "keywords": ["whatsapp", "bot", "admin", "network", "security", "reply"],
+  "author": "Admin Bot",
   "license": "MIT"
 }
